@@ -2,7 +2,7 @@
 <html lang="fa">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Forest Survival</title>
 <style>
   html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#111; font-family: system-ui, sans-serif; }
@@ -57,6 +57,24 @@
     position:absolute; bottom:14px; left:14px; background:rgba(0,0,0,0.35);
     border-radius:8px; padding:8px 12px; font-size:11px; line-height:1.6; opacity:0.85;
   }
+
+  /* ---- touch controls ---- */
+  html, body { overscroll-behavior:none; -webkit-tap-highlight-color:transparent; }
+  canvas, #hud { touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  #touch-ui { display:none; }
+  body.touch #touch-ui { display:block; }
+  body.touch #controls-hint { display:none; }
+  body.touch #center-msg { bottom:175px; }
+  #touch-ui > * { position:absolute; pointer-events:auto; touch-action:none; }
+  #stick { left:24px; bottom:24px; width:120px; height:120px; border-radius:50%;
+    background:rgba(255,255,255,0.10); border:2px solid rgba(255,255,255,0.35); }
+  #knob { position:absolute; left:50%; top:50%; width:50px; height:50px; margin:-25px 0 0 -25px;
+    border-radius:50%; background:rgba(255,255,255,0.45); pointer-events:none; }
+  .tbtn { right:24px; width:76px; height:76px; border-radius:50%; padding:0; font-size:30px; color:#fff;
+    background:rgba(60,110,50,0.55); border:2px solid rgba(255,255,255,0.4); }
+  #btn-act { bottom:56px; }
+  #btn-build { right:112px; bottom:24px; width:60px; height:60px; font-size:24px; }
+  .tbtn.on { background:rgba(125,205,95,0.85); }
 </style>
 </head>
 <body>
@@ -94,6 +112,11 @@
   </div>
   <div id="crosshair"></div>
   <div id="center-msg"></div>
+  <div id="touch-ui">
+    <div id="stick"><div id="knob"></div></div>
+    <button class="tbtn" id="btn-build" aria-label="ساخت دیوار">🧱</button>
+    <button class="tbtn" id="btn-act" aria-label="قطع درخت / حمله">🪓</button>
+  </div>
   <div id="controls-hint">
     WASD حرکت &nbsp;|&nbsp; موس نگاه &nbsp;|&nbsp; E قطع درخت / حمله &nbsp;|&nbsp; B ساخت دیوار
   </div>
@@ -422,6 +445,69 @@
     pitch = Math.max(-1.2, Math.min(1.2, pitch));
   });
 
+  // ---------- Touch controls ----------
+  const stickEl = document.getElementById("stick"), knobEl = document.getElementById("knob");
+  const tv = { x:0, y:0 }; // joystick vector, -1..1 (down = backward)
+  const STICK_R = 45;
+  let stickId = null, stickC = null, lookId = null, lookX = 0, lookY = 0;
+
+  const enableTouch = () => document.body.classList.add("touch");
+  if (matchMedia("(pointer: coarse)").matches) enableTouch();
+  else window.addEventListener("touchstart", enableTouch, { once:true, passive:true });
+
+  function stickMove(t) {
+    let dx = t.clientX - stickC.x, dy = t.clientY - stickC.y;
+    const d = Math.hypot(dx, dy);
+    if (d > STICK_R) { dx *= STICK_R/d; dy *= STICK_R/d; }
+    knobEl.style.transform = `translate(${dx}px,${dy}px)`;
+    tv.x = dx/STICK_R; tv.y = dy/STICK_R;
+  }
+  function stickEnd() { stickId = null; tv.x = tv.y = 0; knobEl.style.transform = ""; }
+
+  document.addEventListener("touchstart", (e) => {
+    if (hud.style.display !== "block") return;
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const btn = t.target.closest(".tbtn");
+      if (btn) {
+        btn.classList.add("on");
+        if (btn.id === "btn-build") tryBuild(); else tryInteract();
+      } else if (t.target.closest("#stick")) {
+        if (stickId !== null) continue;
+        stickId = t.identifier;
+        const r = stickEl.getBoundingClientRect();
+        stickC = { x: r.left + r.width/2, y: r.top + r.height/2 };
+        stickMove(t);
+      } else if (lookId === null) {
+        lookId = t.identifier; lookX = t.clientX; lookY = t.clientY;
+      }
+    }
+  }, { passive:false });
+
+  document.addEventListener("touchmove", (e) => {
+    if (hud.style.display !== "block") return;
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === stickId) stickMove(t);
+      else if (t.identifier === lookId) {
+        yaw -= (t.clientX - lookX) * 0.005;
+        pitch = Math.max(-1.2, Math.min(1.2, pitch - (t.clientY - lookY) * 0.005));
+        lookX = t.clientX; lookY = t.clientY;
+      }
+    }
+  }, { passive:false });
+
+  function touchEnd(e) {
+    for (const t of e.changedTouches) {
+      if (t.identifier === stickId) stickEnd();
+      else if (t.identifier === lookId) lookId = null;
+      const btn = t.target.closest(".tbtn");
+      if (btn) btn.classList.remove("on");
+    }
+  }
+  document.addEventListener("touchend", touchEnd);
+  document.addEventListener("touchcancel", touchEnd);
+
   const MOVE_SPEED = 5.5;
   let lastSend = 0;
 
@@ -436,8 +522,10 @@
     if (keys["KeyS"]) move.sub(forward);
     if (keys["KeyD"]) move.add(right);
     if (keys["KeyA"]) move.sub(right);
+    if (Math.hypot(tv.x, tv.y) > 0.15) move.addScaledVector(right, tv.x).addScaledVector(forward, -tv.y);
     if (move.lengthSq() > 0) {
-      move.normalize().multiplyScalar(MOVE_SPEED * dt);
+      const mag = Math.min(1, move.length());
+      move.normalize().multiplyScalar(MOVE_SPEED * dt * mag);
       playerRig.position.add(move);
       const r = Math.hypot(playerRig.position.x, playerRig.position.z);
       if (r > 58) {
