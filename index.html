@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Forest Survival</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#111; font-family: system-ui, sans-serif; }
+  canvas { display:block; }
+
+  #menu {
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(circle at 50% 30%, #1b2f1b, #060a06);
+    z-index: 10;
+  }
+  #menu .card {
+    background: rgba(0,0,0,0.55); border:1px solid #3d5c3d; border-radius:14px;
+    padding: 28px 32px; width: 300px; text-align:center; color:#e8f0e0;
+  }
+  #menu h1 { font-size:22px; margin:0 0 4px; letter-spacing:0.5px; }
+  #menu p { font-size:13px; opacity:0.7; margin:0 0 18px; }
+  #menu input {
+    width:100%; box-sizing:border-box; padding:10px 12px; margin-bottom:10px;
+    border-radius:8px; border:1px solid #3d5c3d; background:#0d150d; color:#eaf3e3; font-size:14px;
+  }
+  #menu button {
+    width:100%; padding:11px; border:none; border-radius:8px; cursor:pointer;
+    background:#4c8a3f; color:white; font-size:15px; font-weight:600; margin-top:4px;
+  }
+  #menu button:hover { background:#5da24d; }
+  #menu .status { min-height:18px; font-size:12px; color:#ffb3b3; margin-top:8px; }
+
+  #hud {
+    position:fixed; inset:0; pointer-events:none; z-index:5; display:none;
+    color:#f0f5ea; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    font-size:14px;
+  }
+  #hud .top {
+    position:absolute; top:14px; left:14px; right:14px; display:flex; justify-content:space-between; align-items:flex-start;
+  }
+  #hud .stat { background:rgba(0,0,0,0.35); border-radius:8px; padding:8px 12px; margin-bottom:6px; min-width:140px; }
+  #hp-bar-bg { width:120px; height:10px; background:#3a1414; border-radius:5px; overflow:hidden; margin-top:4px; }
+  #hp-bar { height:100%; background:#c94040; width:100%; transition: width 0.2s; }
+  #cycle-bar-bg { width:120px; height:6px; background:#222; border-radius:3px; overflow:hidden; margin-top:4px; }
+  #cycle-bar { height:100%; background:#e6c95c; width:0%; }
+  #players-list { background:rgba(0,0,0,0.35); border-radius:8px; padding:8px 12px; font-size:12px; }
+  #players-list div { margin:2px 0; }
+  #center-msg {
+    position:absolute; bottom:70px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,0.45); padding:6px 14px; border-radius:8px; font-size:13px; white-space:nowrap;
+  }
+  #crosshair {
+    position:absolute; top:50%; left:50%; width:6px; height:6px; margin:-3px;
+    border-radius:50%; background:#fff; opacity:0.7;
+  }
+  #controls-hint {
+    position:absolute; bottom:14px; left:14px; background:rgba(0,0,0,0.35);
+    border-radius:8px; padding:8px 12px; font-size:11px; line-height:1.6; opacity:0.85;
+  }
+</style>
+</head>
+<body>
+
+<div id="menu">
+  <div class="card">
+    <h1>🌲 Forest Survival</h1>
+    <p>بقا در جنگل، شب تا شب، تا ۴ نفر</p>
+    <input id="nameInput" placeholder="اسمت" maxlength="16" />
+    <input id="roomInput" placeholder="کد اتاق (مثلا: team1)" maxlength="20" />
+    <button id="joinBtn">ورود به بازی</button>
+    <div class="status" id="status"></div>
+  </div>
+</div>
+
+<div id="hud">
+  <div class="top">
+    <div>
+      <div class="stat">
+        ❤️ سلامتی
+        <div id="hp-bar-bg"><div id="hp-bar"></div></div>
+      </div>
+      <div class="stat">
+        🪵 چوب: <span id="wood-count">0</span>
+        <div style="font-size:11px;opacity:0.7;margin-top:2px;">۵ چوب برای ساخت دیوار</div>
+      </div>
+    </div>
+    <div>
+      <div class="stat" id="cycle-stat">
+        ☀️ روز
+        <div id="cycle-bar-bg"><div id="cycle-bar"></div></div>
+      </div>
+      <div id="players-list"></div>
+    </div>
+  </div>
+  <div id="crosshair"></div>
+  <div id="center-msg"></div>
+  <div id="controls-hint">
+    WASD حرکت &nbsp;|&nbsp; موس نگاه &nbsp;|&nbsp; E قطع درخت / حمله &nbsp;|&nbsp; B ساخت دیوار
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ---------- UI wiring ----------
+  const menu = document.getElementById("menu");
+  const hud = document.getElementById("hud");
+  const statusEl = document.getElementById("status");
+  const nameInput = document.getElementById("nameInput");
+  const roomInput = document.getElementById("roomInput");
+  const joinBtn = document.getElementById("joinBtn");
+  const woodCountEl = document.getElementById("wood-count");
+  const hpBar = document.getElementById("hp-bar");
+  const cycleBar = document.getElementById("cycle-bar");
+  const cycleStat = document.getElementById("cycle-stat");
+  const playersListEl = document.getElementById("players-list");
+  const centerMsg = document.getElementById("center-msg");
+
+  nameInput.value = "Player" + Math.floor(Math.random()*900+100);
+  roomInput.value = "forest1";
+
+  joinBtn.addEventListener("click", () => {
+    const name = nameInput.value.trim() || "Player";
+    const room = roomInput.value.trim() || "default";
+    joinBtn.disabled = true;
+    statusEl.textContent = "در حال اتصال...";
+    connect(name, room);
+  });
+
+  function showMsg(text, ms) {
+    centerMsg.textContent = text;
+    if (ms) setTimeout(() => { if (centerMsg.textContent === text) centerMsg.textContent = ""; }, ms);
+  }
+
+  // ---------- Networking ----------
+  let ws = null;
+  let myId = null;
+  const remotePlayers = new Map(); // id -> {mesh, label, data}
+  let myWood = 0;
+  let myHp = 100;
+
+  function connect(name, room) {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${proto}//${location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`;
+    ws = new WebSocket(url);
+
+    ws.onopen = () => { statusEl.textContent = ""; };
+    ws.onclose = () => {
+      if (menu.style.display !== "none") {
+        statusEl.textContent = "اتصال برقرار نشد یا اتاق پره (حداکثر ۴ نفر). دوباره تلاش کن.";
+        joinBtn.disabled = false;
+      } else {
+        showMsg("اتصال قطع شد", 4000);
+      }
+    };
+    ws.onerror = () => {};
+    ws.onmessage = (evt) => {
+      let msg;
+      try { msg = JSON.parse(evt.data); } catch { return; }
+      handleServerMessage(msg);
+    };
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }
+
+  // ---------- Three.js setup ----------
+  let scene, camera, renderer, sun, ambient, ground, skyMesh;
+  let playerRig; // holds camera for movement
+  const clock = new THREE.Clock();
+  const trees = new Map(); // id -> mesh
+  const structures = new Map(); // id -> mesh
+  const monsters = new Map(); // id -> mesh
+
+  function initScene() {
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x9fd3ff, 20, 90);
+
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 500);
+    playerRig = new THREE.Object3D();
+    playerRig.position.set(0, 1.6, 8);
+    playerRig.add(camera);
+    scene.add(playerRig);
+
+    renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    ambient = new THREE.AmbientLight(0x8899aa, 0.7);
+    scene.add(ambient);
+    sun = new THREE.DirectionalLight(0xfff3d6, 1.1);
+    sun.position.set(30, 50, 10);
+    scene.add(sun);
+
+    const groundGeo = new THREE.PlaneGeometry(220, 220, 1, 1);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x2f5c2a });
+    ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI/2;
+    scene.add(ground);
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  }
+
+  function makeTreeMesh() {
+    const g = new THREE.Group();
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.25, 0.32, 2, 6),
+      new THREE.MeshStandardMaterial({ color: 0x6b4423 })
+    );
+    trunk.position.y = 1;
+    const leaves = new THREE.Mesh(
+      new THREE.ConeGeometry(1.4, 3, 7),
+      new THREE.MeshStandardMaterial({ color: 0x27622f })
+    );
+    leaves.position.y = 3.2;
+    g.add(trunk, leaves);
+    return g;
+  }
+
+  function makeStumpMesh() {
+    return new THREE.Mesh(
+      new THREE.CylinderGeometry(0.3, 0.35, 0.4, 6),
+      new THREE.MeshStandardMaterial({ color: 0x5c3a1e })
+    );
+  }
+
+  function makePlayerMesh(color) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.4, 1.0, 4, 8),
+      new THREE.MeshStandardMaterial({ color })
+    );
+    body.position.y = 1;
+    g.add(body);
+    return g;
+  }
+
+  function makeMonsterMesh() {
+    const m = new THREE.Mesh(
+      new THREE.ConeGeometry(0.6, 1.6, 5),
+      new THREE.MeshStandardMaterial({ color: 0xaa1f1f, emissive: 0x330000 })
+    );
+    m.position.y = 0.8;
+    return m;
+  }
+
+  function makeWallMesh() {
+    return new THREE.Mesh(
+      new THREE.BoxGeometry(2.2, 1.6, 0.3),
+      new THREE.MeshStandardMaterial({ color: 0x8a6a3a })
+    );
+  }
+
+  // ---------- Server message handling ----------
+  function handleServerMessage(msg) {
+    if (msg.type === "init") {
+      myId = msg.id;
+      menu.style.display = "none";
+      hud.style.display = "block";
+      initScene();
+      animate();
+
+      for (const t of msg.trees) addOrUpdateTree(t);
+      for (const s of msg.structures) addStructure(s);
+      for (const p of msg.players) { if (p.id !== myId) addRemotePlayer(p); }
+      applyNight(msg.isNight);
+
+    } else if (msg.type === "playerJoined") {
+      if (msg.player.id !== myId) addRemotePlayer(msg.player);
+      showMsg(msg.player.name + " وارد شد", 2500);
+
+    } else if (msg.type === "playerLeft") {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) { scene.remove(rp.mesh); remotePlayers.delete(msg.id); }
+
+    } else if (msg.type === "playerMoved") {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) {
+        rp.mesh.position.set(msg.x, msg.y, msg.z);
+        rp.mesh.rotation.y = msg.ry;
+      }
+
+    } else if (msg.type === "treeChopped") {
+      const t = trees.get(msg.treeId);
+      if (t) {
+        scene.remove(t);
+        const stump = makeStumpMesh();
+        stump.position.copy(t.position);
+        scene.add(stump);
+        trees.set(msg.treeId, stump);
+      }
+      if (msg.by === myId) { myWood = msg.wood; woodCountEl.textContent = myWood; }
+
+    } else if (msg.type === "structureBuilt") {
+      addStructure(msg.structure);
+      if (msg.structure.owner === myId) { myWood = msg.wood; woodCountEl.textContent = myWood; }
+
+    } else if (msg.type === "monsterSpawned") {
+      addMonster(msg.monster);
+
+    } else if (msg.type === "monstersUpdate") {
+      syncMonsters(msg.monsters);
+
+    } else if (msg.type === "monsterHit" || msg.type === "monsterKilled") {
+      if (msg.type === "monsterKilled") {
+        const mm = monsters.get(msg.id);
+        if (mm) { scene.remove(mm); monsters.delete(msg.id); }
+      }
+
+    } else if (msg.type === "tick") {
+      applyNight(msg.isNight);
+      updateCycleBar(msg.cycleT, msg.cycleMs, msg.isNight);
+      updatePlayersList(msg.players);
+      const me = msg.players.find(p => p.id === myId);
+      if (me) { myHp = me.hp; hpBar.style.width = Math.max(0, myHp) + "%"; }
+    }
+  }
+
+  function addOrUpdateTree(t) {
+    if (t.chopped) {
+      const stump = makeStumpMesh();
+      stump.position.set(t.x, 0, t.z);
+      scene.add(stump);
+      trees.set(t.id, stump);
+    } else {
+      const mesh = makeTreeMesh();
+      mesh.position.set(t.x, 0, t.z);
+      mesh.userData.treeId = t.id;
+      scene.add(mesh);
+      trees.set(t.id, mesh);
+    }
+  }
+
+  function addStructure(s) {
+    const wall = makeWallMesh();
+    wall.position.set(s.x, 0.8, s.z);
+    wall.rotation.y = s.ry || 0;
+    scene.add(wall);
+    structures.set(s.id, wall);
+  }
+
+  function addRemotePlayer(p) {
+    const mesh = makePlayerMesh(0x3d6fd6);
+    mesh.position.set(p.x, p.y, p.z);
+    scene.add(mesh);
+    remotePlayers.set(p.id, { mesh, data: p });
+  }
+
+  function addMonster(m) {
+    const mesh = makeMonsterMesh();
+    mesh.position.set(m.x, 0.8, m.z);
+    mesh.userData.monsterId = m.id;
+    scene.add(mesh);
+    monsters.set(m.id, mesh);
+  }
+
+  function syncMonsters(list) {
+    const seen = new Set();
+    for (const m of list) {
+      seen.add(m.id);
+      let mesh = monsters.get(m.id);
+      if (!mesh) { addMonster(m); mesh = monsters.get(m.id); }
+      mesh.position.set(m.x, 0.8, m.z);
+    }
+    for (const [id, mesh] of monsters) {
+      if (!seen.has(id)) { scene.remove(mesh); monsters.delete(id); }
+    }
+  }
+
+  function applyNight(night) {
+    if (night) {
+      scene.fog.color.set(0x0a0d1c);
+      scene.background = new THREE.Color(0x0a0d1c);
+      sun.intensity = 0.15;
+      ambient.intensity = 0.25;
+      cycleStat.firstChild.textContent = "🌙 شب ";
+    } else {
+      scene.fog.color.set(0x9fd3ff);
+      scene.background = new THREE.Color(0x9fd3ff);
+      sun.intensity = 1.1;
+      ambient.intensity = 0.7;
+      cycleStat.firstChild.textContent = "☀️ روز ";
+    }
+  }
+
+  function updateCycleBar(t, total, night) {
+    cycleBar.style.width = Math.min(100, (t/total)*100) + "%";
+    cycleBar.style.background = night ? "#6c7fe6" : "#e6c95c";
+  }
+
+  function updatePlayersList(players) {
+    playersListEl.innerHTML = players.map(p => {
+      const rp = [...remotePlayers.values()].find(r => r.data.id === p.id);
+      const name = p.id === myId ? "تو" : (rp ? rp.data.name : "Player");
+      return `<div>${name}: ❤️${Math.max(0,p.hp)} 🪵${p.wood}</div>`;
+    }).join("");
+  }
+
+  // ---------- Input / movement ----------
+  const keys = {};
+  window.addEventListener("keydown", (e) => { keys[e.code] = true; if (e.code==="KeyE") tryInteract(); if (e.code==="KeyB") tryBuild(); });
+  window.addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+  let yaw = 0, pitch = 0;
+  document.addEventListener("click", () => {
+    if (hud.style.display === "block" && document.pointerLockElement !== renderer.domElement) {
+      renderer.domElement.requestPointerLock();
+    }
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (document.pointerLockElement !== renderer.domElement) return;
+    yaw -= e.movementX * 0.0025;
+    pitch -= e.movementY * 0.0025;
+    pitch = Math.max(-1.2, Math.min(1.2, pitch));
+  });
+
+  const MOVE_SPEED = 5.5;
+  let lastSend = 0;
+
+  function updateMovement(dt) {
+    playerRig.rotation.y = yaw;
+    camera.rotation.x = pitch;
+
+    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    const move = new THREE.Vector3();
+    if (keys["KeyW"]) move.add(forward);
+    if (keys["KeyS"]) move.sub(forward);
+    if (keys["KeyD"]) move.add(right);
+    if (keys["KeyA"]) move.sub(right);
+    if (move.lengthSq() > 0) {
+      move.normalize().multiplyScalar(MOVE_SPEED * dt);
+      playerRig.position.add(move);
+      const r = Math.hypot(playerRig.position.x, playerRig.position.z);
+      if (r > 58) {
+        const s = 58/r;
+        playerRig.position.x *= s; playerRig.position.z *= s;
+      }
+    }
+
+    const now = performance.now();
+    if (now - lastSend > 60) {
+      lastSend = now;
+      send({ type:"move", x:playerRig.position.x, y:playerRig.position.y, z:playerRig.position.z, ry:yaw });
+    }
+  }
+
+  function nearestOfMap(map, maxDist) {
+    let best = null, bd = maxDist;
+    for (const [id, obj] of map) {
+      const mesh = obj.position !== undefined ? obj : obj;
+      const d = playerRig.position.distanceTo(mesh.position);
+      if (d < bd) { bd = d; best = id; }
+    }
+    return best;
+  }
+
+  function tryInteract() {
+    const treeId = nearestOfMap(trees, 3.2);
+    if (treeId && trees.get(treeId).userData.treeId) {
+      send({ type:"chop", treeId });
+      return;
+    }
+    const monsterId = nearestOfMap(monsters, 3.0);
+    if (monsterId) {
+      send({ type:"hit", monsterId });
+    }
+  }
+
+  function tryBuild() {
+    if (myWood < 5) { showMsg("برای ساخت دیوار ۵ چوب لازمه", 1800); return; }
+    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const pos = playerRig.position.clone().add(forward.multiplyScalar(3));
+    send({ type:"build", x: pos.x, z: pos.z, ry: yaw });
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(0.1, clock.getDelta());
+    updateMovement(dt);
+    renderer.render(scene, camera);
+  }
+
+})();
+</script>
+</body>
+</html>
